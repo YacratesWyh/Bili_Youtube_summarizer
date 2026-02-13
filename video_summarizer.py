@@ -1,4 +1,5 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import re
 import requests
 from utils import Config, clean_text
 
@@ -37,6 +38,25 @@ class VideoSummarizer:
         
         # 调用API进行总结
         return self._call_ai_api(prompt, model_name)
+
+    def chat(self, user_message: str, model: Optional[str] = None, history: Optional[List[Dict[str, str]]] = None) -> Optional[str]:
+        """与大模型进行通用对话"""
+        message = (user_message or "").strip()
+        if not message:
+            return None
+        model_name = model or self.default_model
+        system_prompt = "你是一个专业、简洁、可靠的中文助手。请直接回答用户问题。"
+        messages: List[Dict[str, str]] = []
+        if history:
+            for item in history:
+                role = str(item.get("role", "")).strip()
+                content = str(item.get("content", "")).strip()
+                if role in {"system", "user", "assistant"} and content:
+                    messages.append({"role": role, "content": content})
+        if not any(m.get("role") == "system" for m in messages):
+            messages.insert(0, {"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": message})
+        return self._call_ai_api_messages(messages, model_name)
     
     def _extract_text_content(self, subtitle_data: Dict[str, Any]) -> str:
         """从字幕数据中提取纯文本"""
@@ -52,6 +72,8 @@ class VideoSummarizer:
                 clean_lines = []
                 
                 for line in lines:
+                    # 先剥离字幕序号与时间戳，避免无意义token进入prompt
+                    line = self._strip_timestamps(line)
                     # 移除时间戳部分，只保留文本
                     clean_line = clean_text(line)
                     if clean_line and not clean_line.startswith('['):
@@ -61,6 +83,22 @@ class VideoSummarizer:
                     text_parts.append("\n".join(clean_lines))
         
         return "\n\n".join(text_parts)
+
+    def _strip_timestamps(self, line: str) -> str:
+        """删除常见字幕时间戳与序号"""
+        s = (line or "").strip()
+        if not s:
+            return ""
+        if s.isdigit():
+            return ""
+        # SRT/VTT区间：00:00:01,000 --> 00:00:03,200
+        if "-->" in s:
+            return ""
+        # [00:12] / [01:02:03] / [00:01.23] 这类标签
+        s = re.sub(r"\[\s*\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\s*\]", "", s)
+        # 行内裸时间：00:12 / 01:02:03 / 00:12.34 / 00:12,340
+        s = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?\b", "", s)
+        return s.strip()
     
     def _build_summary_prompt(self, title: str, description: str, content: str) -> str:
         """构建总结提示"""
@@ -77,30 +115,51 @@ class VideoSummarizer:
 2. 关键点提取
 3. 适合的标签（用逗号分隔）
 
-总结应该简洁明了，字数控制在500字以内。"""
+总结应该简洁明了，字数控制在500字以内。
+重要：只输出最终总结，不要输出思考过程、推理步骤或分析草稿。"""
         
         return prompt
     
-    def _call_ai_api(self, prompt: str, model: Optional[str]) -> Optional[str]:
+    def _call_ai_api(self, prompt: str, model: Optional[str], system_prompt: Optional[str] = None) -> Optional[str]:
         """按智谱文档的HTTP Bearer方式调用 chat/completions（无兜底）"""
+        messages = [
+            {
+                "role": "system",
+                "content": system_prompt or "你是一个专业的视频内容总结助手，擅长提取视频的核心内容并生成简洁的总结。"
+            },
+            {"role": "user", "content": prompt}
+        ]
+        return self._call_ai_api_messages(messages, model)
+
+    def _call_ai_api_messages(self, messages: List[Dict[str, str]], model: Optional[str]) -> Optional[str]:
+        """按messages调用 chat/completions（无兜底）"""
         model_name = model or self.default_model
         base_url = (self.ai_base_url or "").rstrip("/")
         endpoint = f"{base_url}/chat/completions"
-        messages = [
-            {"role": "system", "content": "你是一个专业的视频内容总结助手，擅长提取视频的核心内容并生成简洁的总结。"},
-            {"role": "user", "content": prompt}
-        ]
+        api_key = (self.ai_api_key or "").strip()
+        if api_key.lower().startswith("bearer "):
+            # 兼容用户直接粘贴 "Bearer xxx"
+            api_key = api_key[7:].strip()
+        if not api_key:
+            print("AI API Key 为空，请在GUI或 .env 中配置有效密钥")
+            return None
+        try:
+            # requests/http.client 发送header时使用 latin-1，提前校验并给出可读错误
+            api_key.encode("latin-1")
+        except UnicodeEncodeError:
+            print("AI API Key 包含非法字符（例如中文或全角字符），请粘贴原始英文密钥")
+            return None
 
         try:
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.ai_api_key}",
+                "Authorization": f"Bearer {api_key}",
             }
             payload = {
                 "model": model_name,
                 "messages": messages,
                 "temperature": 0.7,
-                "max_tokens": 1000,
+                "max_tokens": 1500,
                 "stream": False
             }
             response = requests.post(
@@ -115,7 +174,7 @@ class VideoSummarizer:
             data = response.json()
             choices = data.get("choices") or []
             if not choices:
-                raise RuntimeError(f"响应缺少choices: {data}")
+                raise RuntimeError(f"响应缺少choices: {str(data)[:500]}")
             message = choices[0].get("message") or {}
             content = message.get("content")
             if isinstance(content, list):
@@ -123,7 +182,24 @@ class VideoSummarizer:
                     part.get("text", "") if isinstance(part, dict) else str(part)
                     for part in content
                 )
-            return str(content).strip() if content else None
+            text = str(content).strip() if content else ""
+            if not text:
+                reasoning = message.get("reasoning_content")
+                if isinstance(reasoning, list):
+                    reasoning = "".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in reasoning
+                    )
+                reasoning_text = str(reasoning).strip() if reasoning else ""
+                if reasoning_text:
+                    print(f"警告: content为空，回退使用reasoning_content（model={model_name}）")
+                    return reasoning_text
+            if not text:
+                finish_reason = choices[0].get("finish_reason")
+                print(f"AI返回空内容（model={model_name}, finish_reason={finish_reason}）")
+                print(f"响应片段: {str(data)[:500]}")
+                return None
+            return text
         except Exception as e:
             print(f"调用AI API失败（model={model_name}）: {e}")
             if "/api/coding/paas/v4" in base_url:

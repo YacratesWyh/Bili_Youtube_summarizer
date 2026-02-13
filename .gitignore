@@ -1,4 +1,6 @@
 key.json
+.env
+.env.*
 output/
 *.pyc
 *.log

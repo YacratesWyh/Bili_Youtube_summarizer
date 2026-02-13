@@ -318,10 +318,16 @@ class SubtitleExtractor:
 
     def __init__(self, config: Config):
         self.config = config
-        self.adapters: List[BaseSubtitleAdapter] = [
-            BilibiliSubtitleAdapter(config),
-            YoutubeSubtitleAdapter(config),
-        ]
+        # 延迟初始化：避免仅命中缓存时也触发B站登录态读取
+        self.adapters: Optional[List[BaseSubtitleAdapter]] = None
+
+    def _ensure_adapters(self) -> List[BaseSubtitleAdapter]:
+        if self.adapters is None:
+            self.adapters = [
+                BilibiliSubtitleAdapter(self.config),
+                YoutubeSubtitleAdapter(self.config),
+            ]
+        return self.adapters
 
     def extract_subtitles(self, video_url: str, subtitle_format: str = "srt") -> Optional[Dict[str, Any]]:
         """从视频URL提取字幕（自动选择平台适配器）"""
@@ -365,7 +371,7 @@ class SubtitleExtractor:
         }
 
     def _pick_adapter(self, video_url: str) -> Optional[BaseSubtitleAdapter]:
-        for adapter in self.adapters:
+        for adapter in self._ensure_adapters():
             if adapter.matches(video_url):
                 return adapter
         return None

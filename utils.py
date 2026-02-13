@@ -18,8 +18,8 @@ class Config:
         self.AI_BASE_URL = os.getenv("AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
         self.OUTPUT_DIR = "output"
         self.LOG_FILE = "app.log"
-        self.DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "GLM-4.7")
-        self.REQUEST_TIMEOUT = 30  # 请求超时时间（秒）
+        self.DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "GLM-4.7-FlashX")
+        self.REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "60"))  # 请求超时时间（秒）
         self.MAX_RETRY = 3  # 最大重试次数
         
         # B站Cookie配置（获取AI字幕必需）
