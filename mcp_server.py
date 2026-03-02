@@ -9,7 +9,9 @@ videosummary MCP Server
 """
 
 import os
+import re
 import sys
+from datetime import date
 from pathlib import Path
 
 # 确保本目录在 sys.path 里（不论从哪个 cwd 启动）
@@ -46,13 +48,13 @@ _FRAMEWORK_PATH = _HERE / "GAME_PROGRAMMING_SKILL_FRAMEWORK.md"
 
 @mcp.tool()
 def get_subtitle(url: str) -> str:
-    """提取 Bilibili 或 YouTube 视频的字幕，返回带时间戳的纯文本。
+    """提取 Bilibili 或 YouTube 视频字幕，保存到 output/{日期}/ 目录，返回文件路径。
 
     参数:
         url: 视频链接，支持 Bilibili BV/av 号、YouTube watch?v= 和 shorts。
 
     返回:
-        字幕文本（Markdown 格式，含视频标题和时间戳行），或失败原因。
+        保存结果（文件路径 + 视频基本信息），不返回字幕正文。
     """
     subtitle_data = _extractor.extract_subtitles(url, subtitle_format="srt")
     if not subtitle_data:
@@ -68,24 +70,32 @@ def get_subtitle(url: str) -> str:
     if not subtitles:
         return "字幕提取失败：字幕数据为空。"
 
-    body = subtitles[0].get("body", [])
-    lines = []
-    for item in body:
-        start = _fmt_ts(item.get("from", 0))
-        end = _fmt_ts(item.get("to", 0))
-        content = item.get("content", "")
-        if content:
-            lines.append(f"[{start} - {end}] {content}")
+    # 按日期建子目录
+    today = date.today().strftime("%Y-%m-%d")
+    out_dir = _HERE / _config.OUTPUT_DIR / today
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 视频 ID（BV号 / YouTube ID）
+    vid_id = _extract_vid_id(url)
+
+    # 标题前 8 个合法字符（保留汉字、字母、数字、短横线和下划线）
+    title_prefix = re.sub(r"[^\w\u4e00-\u9fff-]", "", title)[:8]
+
+    stem = f"{title_prefix}_{vid_id}" if title_prefix else vid_id
+    srt_path = str(out_dir / f"{stem}_subtitles.srt")
+    md_path  = str(out_dir / f"{stem}_subtitles.md")
+
+    _extractor.save_subtitles_to_file(subtitle_data, srt_path)
+    _extractor.save_subtitles_to_markdown(subtitle_data, md_path)
 
     mins, secs = divmod(int(duration), 60)
-    header = (
-        f"# {title}\n\n"
-        f"- 平台：{platform}\n"
-        f"- UP主/作者：{owner}\n"
-        f"- 时长：{mins}:{secs:02d}\n\n"
-        f"## 字幕\n\n"
+    return (
+        f"字幕已保存\n"
+        f"标题：{title}\n"
+        f"平台：{platform}  UP主/作者：{owner}  时长：{mins}:{secs:02d}\n"
+        f"SRT: {srt_path}\n"
+        f"MD:  {md_path}"
     )
-    return header + "\n".join(lines)
 
 
 @mcp.tool()
@@ -158,6 +168,20 @@ def _fmt_ts(seconds: float) -> str:
     m = (total % 3600) // 60
     s = total % 60
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _extract_vid_id(url: str) -> str:
+    """从 URL 提取稳定视频 ID（BV号 / YouTube ID），取不到时回退到 'video'"""
+    bv = re.search(r"(BV[a-zA-Z0-9]+)", url)
+    if bv:
+        return bv.group(1)
+    yt = re.search(r"[?&]v=([a-zA-Z0-9_-]{6,})", url)
+    if yt:
+        return yt.group(1)
+    short = re.search(r"youtu\.be/([a-zA-Z0-9_-]{6,})", url)
+    if short:
+        return short.group(1)
+    return "video"
 
 
 # ── 入口 ──────────────────────────────────────────────────────────────────────
