@@ -67,3 +67,28 @@ python main.py -u "https://www.bilibili.com/video/BVxxxx" --no-summary
 - 命中字幕缓存时会跳过重复抓取
 - 命中缓存且目标文件已存在时会跳过重复写入
 - 命中缓存且 `subtitles.md + summary.md` 都存在时，会直接走“总结已完成”路径
+
+## Cursor MCP 集成（可选）
+
+将本工具作为 MCP Server 接入 Cursor IDE，可在对话中直接调用字幕提取和总结功能。
+
+```bash
+cp .cursor/mcp.json.example .cursor/mcp.json
+```
+
+编辑 .cursor/mcp.json，替换为你本机的路径：
+
+```json
+{
+  "mcpServers": {
+    "videosummary": {
+      "command": "/path/to/your/python",
+      "args": ["/path/to/videosummary/mcp_server.py"],
+      "env": {}
+    }
+  }
+}
+```
+
+- command：Python 解释器路径（which python 或 where python 查看）
+- rgs：mcp_server.py 的绝对路径

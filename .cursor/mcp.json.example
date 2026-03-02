@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "videosummary": {
+      "command": "/path/to/your/python",
+      "args": ["/path/to/videosummary/mcp_server.py"],
+      "env": {}
+    }
+  }
+}

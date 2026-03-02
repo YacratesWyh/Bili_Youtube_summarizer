@@ -4,3 +4,5 @@ key.json
 output/
 *.pyc
 *.log
+test
+.cursor/mcp.json
